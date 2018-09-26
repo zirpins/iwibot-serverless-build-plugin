@@ -1,0 +1,72 @@
+{
+  "name": "iwibot-serverless-build-plugin",
+  "version": "0.0.1",
+  "description": "This plugin builds the iwibot-openwhisk Actions",
+  "main": "./index.js",
+  "engines": {
+    "node": ">= 4.3"
+  },
+  "scripts": {
+    "installPlugin": "tsc && cp -r ./dist/iwibot-serverless-build-plugin /home/sensei/iwibot-openwhisk/.serverless_plugins/",
+    "build": "tsc",
+    "pretest": "tsc",
+    "test": "nyc mocha dist/iwibot-serverless-build-plugin/test",
+    "lint": "tslint 'src/**/*.ts'"
+  },
+  "dependencies": {
+    "archiver": "^2.0.0",
+    "bluebird": "^3.5.2",
+    "chalk": "^2.1.0",
+    "fs-extra": "^4.0.1",
+    "get-folder-size": "^1.0.0",
+    "is-stream": "~1.1.0",
+    "lutils": "^2.4.0",
+    "minimatch": "^3.0.4",
+    "mkdirp": "~0.5.1",
+    "ncp": "^2.0.0",
+    "openwhisk": "^3.17.0",
+    "resolve-pkg": "^1.0.0",
+    "semver": "^5.4.1",
+    "wait.for": "^0.6.6",
+    "walker": "^1.0.7"
+  },
+  "devDependencies": {
+    "@types/archiver": "^2.0.0",
+    "@types/babel-core": "^6.25.0",
+    "@types/bluebird": "^3.5.8",
+    "@types/chai": "^4.1.4",
+    "@types/chalk": "^0.4.31",
+    "@types/fs-extra": "^4.0.0",
+    "@types/fs-promise": "^1.0.3",
+    "@types/graceful-fs": "^2.0.29",
+    "@types/js-yaml": "^3.9.0",
+    "@types/minimatch": "^2.0.29",
+    "@types/mkdirp": "^0.5.0",
+    "@types/mocha": "^5.2.5",
+    "@types/node": "^8.0.19",
+    "@types/semver": "^5.3.33",
+    "@types/source-map-support": "^0.4.0",
+    "@types/swagger-schema-official": "^2.0.6",
+    "@types/typescript": "^2.0.0",
+    "@types/uglify-js": "^2.6.29",
+    "chai": "^4.1.2",
+    "js-yaml": "^3.12.0",
+    "jszip": "^3.1.5",
+    "mocha": "^5.2.0",
+    "mocha-typescript": "^1.1.17",
+    "nyc": "^13.0.1",
+    "sinon": "^6.2.0",
+    "source-map-support": "^0.4.18",
+    "ts-jest": "^20.0.10",
+    "ts-node": "^7.0.1",
+    "tslint": "^5.6.0",
+    "tslint-config-temando": "^1.2.0",
+    "typescript": "^2.9.2",
+    "uglify-js": "^3.4.9",
+    "xml2js": "^0.4.19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HSKA-IWI-VSYS/iwibot-serverless-build-plugin"
+  }
+}
