@@ -1,4 +1,4 @@
-If you modify the plugin, it need to be installed in the `iwibot-openwhisk` project. Modify the `installPlugin` script in the `package.json` to point to your clone of the `iwibot-openwhisk` repository locally. Then run `npm run installPlugin`.
+If you modify the plugin, it need to be installed in the `iwibot-openwhisk` project. Modify the `installPlugin` and `uninstallPlugin` script in the `package.json` to point to your clone of the `iwibot-openwhisk` repository locally. Then run `npm run installPlugin`. Please make one commit for the installed changes in the `iwibot-openwhisk` repo.
 
 The packaging of the functions is synchronous. The deployment is asynchronous. 
 
