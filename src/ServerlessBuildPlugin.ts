@@ -4,7 +4,7 @@ import * as path from 'path';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import * as c from 'chalk';
-import { copySync, copy, createWriteStream, emptyDir, ensureDir, readFile, rename, writeFile } from 'fs-extra';
+import { copySync, copy, createWriteStream, emptyDir, ensureDir, readFile, renameSync, writeFile } from 'fs-extra';
 import { clone, isArray, merge } from 'lutils';
 import * as semver from 'semver';
 import { defaultConfig, IPluginConfig } from './config';
@@ -415,8 +415,8 @@ export class ServerlessBuildPlugin {
                     await writeFile(join(this.servicePath, fnPathName, 'package.json'), JSON.stringify(packageJson, null, 2));
 
                     // rename files
-                    await rename(join(this.servicePath, fnPathName, 'lib', 'Test.js'), join(this.servicePath, fnPathName, 'lib', name + '.js'));
-                    await rename(join(this.servicePath, fnPathName, 'test', 'Test.iwibot_test.js'), join(this.servicePath, fnPathName, 'test', name + '.iwibot_test.js'));
+                    renameSync(join(this.servicePath, fnPathName, 'lib', 'Test.js'), join(this.servicePath, fnPathName, 'lib', name + '.js'));
+                    renameSync(join(this.servicePath, fnPathName, 'test', 'Test.iwibot_test.js'), join(this.servicePath, fnPathName, 'test', name + '.iwibot_test.js'));
 
                     this.logger.message('Template', `nodejs template written to directory ${fnPathName}`);
 
@@ -428,7 +428,7 @@ export class ServerlessBuildPlugin {
                     break;
 
                 case 'go':
-                    await rename(join(this.servicePath, fnPathName, 'src', 'de.hska.iwibot.actions.go', 'test.go'), join(this.servicePath, fnPathName, 'src', 'de.hska.iwibot.actions.go', name + '.go'));
+                    renameSync(join(this.servicePath, fnPathName, 'src', 'de.hska.iwibot.actions.go', 'test.go'), join(this.servicePath, fnPathName, 'src', 'de.hska.iwibot.actions.go', name + '.go'));
                     this.logger.message('Template', `go template written to directory ${fnPathName}`);
                     this.addYamlPartToFile(name, kind, fnPathName, 'bin/exec', [
                         'bin/exec',
@@ -463,7 +463,7 @@ export class ServerlessBuildPlugin {
                 case 'java':
 
                     // rename Template.java
-                    await rename(
+                    renameSync(
                         join(this.servicePath, fnPathName, 'src', 'main', 'java', 'de', 'hska', 'iwibot', 'actions', 'java', 'Template.java'),
                         join(this.servicePath, fnPathName, 'src', 'main', 'java', 'de', 'hska', 'iwibot', 'actions', 'java', name + '.java')
                     );
