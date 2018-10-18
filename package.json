@@ -7,11 +7,13 @@
     "node": ">= 4.3"
   },
   "scripts": {
-    "installPlugin": "tsc && cp -r ./dist/iwibot-serverless-build-plugin /home/sensei/iwibot-openwhisk/.serverless_plugins/",
+    "installPlugin": "node node_modules/typescript/bin/tsc && cp -r ./dist/iwibot-serverless-build-plugin /home/armin/iwibot-openwhisk/.serverless_plugins/iwibot-serverless-build-plugin",
+    "uninstallPlugin": "rm -R /home/armin/iwibot-openwhisk/.serverless_plugins/iwibot-serverless-build-plugin",
+    "deploy": "npm run uninstallPlugin && npm run installPlugin",
     "build": "tsc",
     "pretest": "tsc",
-    "test": "nyc mocha dist/iwibot-serverless-build-plugin/test",
-    "lint": "tslint 'src/**/*.ts'"
+    "test": "node node_modules/mocha/bin/mocha dist/iwibot-serverless-build-plugin/test",
+    "lint": "node node_modules/tslint/bin/tslint 'src/**/*.ts'"
   },
   "dependencies": {
     "archiver": "^2.0.0",
@@ -20,6 +22,7 @@
     "fs-extra": "^4.0.1",
     "get-folder-size": "^1.0.0",
     "is-stream": "~1.1.0",
+    "lodash": "^4.17.11",
     "lutils": "^2.4.0",
     "minimatch": "^3.0.4",
     "mkdirp": "~0.5.1",

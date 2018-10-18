@@ -20,7 +20,13 @@ function getFeeds() {
 }
 
 function deployFeed(feed) {
-    if (!feed.enabled) { return this.logger.message('FEED', c.reset.bold(feed.name) + c.red(' is excluded from deployment'));}
+    if (!feed.enabled) {
+        if (this.options.verbose) {
+            this.logger.message('FEED', c.reset.bold(feed.name) + c.red(' is excluded from deployment'))
+        }
+        return
+    }
+
     return this.provider.client().then(ow => {
         if (this.options.verbose) {
             this.serverless.cli.log(`Deploying Feed: ${feed.feedName}`);

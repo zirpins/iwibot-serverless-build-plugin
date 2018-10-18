@@ -1,8 +1,8 @@
 import * as Bluebird from 'bluebird';
+import * as _ from 'lodash';
 
-export default function deployPackages() {
-    const pkges = getPackages.bind(this)();
-
+export default async function deployPackages() {
+    const pkges = await getPackages.bind(this)();
     if (pkges.length) {
         this.serverless.cli.log('Deploying Packages...');
     }
@@ -31,8 +31,22 @@ function deployPackage(pkge) {
     })
 }
 
-function getPackages() {
-    /*const pkges = this.serverless.service.packages;
-    return Object.keys(this.serverless.service.packages).map(p => pkges[p]);*/
-    return [{name: 'IWIBot'}];
+async function getPackages(undeploy) {
+    const packages = [];
+    // when getting packages for undeployment, omit the standard two
+    if (!undeploy) {
+        packages.push({ name: this.serverless.service.package.name });
+        packages.push({ name: this.serverless.service.package.testname });
+    }
+
+    await Bluebird.map(Object.keys(this.serverless.service.functions), (fnName) => {
+        const fnConfig = this.serverless.service.functions[fnName];
+        if (fnConfig.enabled) {
+            if (fnConfig.package && fnConfig.package.name) {
+                packages.push({ name: fnConfig.package.name });
+            }
+        }
+    });
+    // remove duplicates by name
+    return _.uniqBy(packages, (e) => { return e.name; })
 }

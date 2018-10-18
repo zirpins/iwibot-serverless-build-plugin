@@ -2,39 +2,74 @@ import {spawn} from "child_process";
 import Bluebird = require("bluebird");
 import * as c from "chalk";
 
-function configureServiceBinding(binding) {
+export function unbindServices() {
+    const bindings = getServiceBindings.bind(this)();
+
+    if (bindings.fns.length || bindings.packages.length) {
+        this.serverless.cli.log('Unbind Service Bindings...');
+    }
+
+    return Bluebird.all(
+        bindings.packages.map(sbs => Bluebird.mapSeries(sbs, sb => unbindService.bind(this)(sb)))
+    ).then(() => Bluebird.all(
+        bindings.fns.map(sb => unbindService.bind(this)(sb)))
+    );
+}
+
+export function bindServices() {
+    const bindings = getServiceBindings.bind(this)();
+
+    if (bindings.fns.length || bindings.packages.length) {
+        this.serverless.cli.log('Configuring Service Bindings...');
+    }
+
+    return Bluebird.all(
+        bindings.packages.map(sbs => Bluebird.mapSeries(sbs, sb => bindService.bind(this)(sb)))
+    ).then(() => Bluebird.all(
+        bindings.fns.map(sb => bindService.bind(this)(sb)))
+    );
+}
+
+export function unbindTestServices() {
+    return unbindServices.call(this);
+}
+
+export function bindTestServices() {
+    return bindServices.call(this)
+}
+
+function bindService(binding) {
     if (this.options.verbose) {
         this.serverless.cli.log(`Configuring Service Binding: ${JSON.stringify(binding)}`);
     }
 
+    let actionName = binding.action;
+    if (this.serverless.service.deployTest) {
+        actionName = this.serverless.service.package.testname + '/' + binding.tmpAction
+    }
+
     return new Promise((resolve, reject) => {
-        const args = ['wsk', 'service', 'bind', binding.name, binding.action]
+        const stderr = [];
+        let hasBinding = false;
 
-        if (binding.instance) {
-            args.push("--instance", binding.instance)
-        }
+        // First get the action
+        let args = ['wsk', 'action', 'get', actionName]
+        const ibmcloud = spawn(`ibmcloud`, args)
 
-        if (binding.key) {
-            args.push("--keyname", binding.key)
-        }
-
-        const ibmcloud = spawn('ibmcloud', args);
-
-        const stdout = []
-        const stderr = []
-
-        ibmcloud.stdout.on('data', data => {
-            stdout.push(data.toString())
+        ibmcloud.stdout.on('data', (data) => {
+            if (('' + data).indexOf(binding.type) > -1) {
+                hasBinding = true;
+            }
         });
 
         ibmcloud.stderr.on('data', (data) => {
-            stderr.push(data.toString())
+            stderr.push('' + data)
         });
 
         ibmcloud.on('error', (err) => {
             if (err.name === 'ENOENT') {
                 const err = new this.serverless.classes.Error(
-                    'Unable to execute `ibmcloud wsk service bind` command. Is IBM Cloud CLI installed?'
+                    'Unable to execute `ibmcloud wsk action get` command. Is IBM Cloud CLI installed?'
                 )
                 return reject(err)
             }
@@ -42,9 +77,12 @@ function configureServiceBinding(binding) {
         });
 
         ibmcloud.on('close', (code) => {
+            const stdout = [];
+            const stderr = [];
+
             if (code === 2) {
                 const err = new this.serverless.classes.Error(
-                    'Unable to execute `ibmcloud wsk service bind` command. Is IBM Cloud Functions CLI plugin installed?'
+                    'Unable to execute `ibmcloud wsk action get` command. Is IBM Cloud Functions CLI plugin installed?'
                 )
                 return reject(err)
             }
@@ -56,42 +94,173 @@ function configureServiceBinding(binding) {
             if (this.options.verbose) {
                 this.serverless.cli.log(`Configured Service Binding: ${JSON.stringify(binding)}`);
             }
-            resolve()
+            if (!hasBinding) {
+                args = ['wsk', 'service', 'bind', binding.type, actionName, '--keyname', binding.key, '--instance', binding.instance]
+                const ibmcloud2 = spawn('ibmcloud', args);
+
+                ibmcloud2.stdout.on('data', (data) => {
+                    stdout.push(data.toString())
+                })
+                ibmcloud2.stderr.on('data', (data) => {
+                    stderr.push(data.toString())
+                })
+                ibmcloud2.on('error', (err) => {
+                    if (err.name === 'ENOENT') {
+                        const err = new this.serverless.classes.Error(
+                            'Unable to execute `ibmcloud wsk service bind` command. Is IBM Cloud CLI installed?'
+                        )
+                        return reject(err)
+                    }
+                    reject(err.message)
+                });
+                ibmcloud2.on('close', (code) => {
+                    if (code === 2) {
+                        const err = new this.serverless.classes.Error(
+                            'Unable to execute `ibmcloud wsk action get` command. Is IBM Cloud Functions CLI plugin installed?'
+                        )
+                        return reject(err)
+                    }
+                    if (code > 0) {
+                        const errmsg = (stderr[0] || '').split('\n')[0]
+                        const err = new this.serverless.classes.Error(`Failed to configure service binding (${JSON.stringify(binding)})\n  ${errmsg}`);
+                        return reject(err)
+                    }
+                    if (this.options.verbose) {
+                        this.serverless.cli.log(`Configured Service Binding: ${JSON.stringify(binding)}`);
+                    }
+                    console.log(`Service ${c.reset.bold.blue(binding.type)} bound to ${c.reset.bold.blue(actionName)}`)
+                    resolve()
+                })
+            } else {
+                console.log(`Service ${c.reset.bold.blue(binding.type)} already bound to ${c.reset.bold.blue(actionName)}`)
+                resolve()
+            }
+
         });
     });
 }
 
-export default function configureServiceBindings() {
-    const bindings = getServiceBindings.bind(this)();
-
-    if (bindings.fns.length || bindings.packages.length) {
-        this.serverless.cli.log('Configuring Service Bindings...');
+function unbindService(binding) {
+    if (this.options.verbose) {
+        this.serverless.cli.log(`Unbind Service Binding: ${JSON.stringify(binding)}`);
     }
 
-    return Bluebird.all(
-        bindings.packages.map(sbs => Bluebird.mapSeries(sbs, sb => configureServiceBinding.bind(this)(sb)))
-    ).then(() => Bluebird.all(
-        bindings.fns.map(sb => configureServiceBinding.bind(this)(sb)))
-    );
+    let actionName = binding.action;
+    if (this.serverless.service.deployTest) {
+        actionName = this.serverless.service.package.testname + '/' + binding.tmpAction
+    }
+
+    return new Promise((resolve, reject) => {
+        // First get the action
+        let args = ['wsk', 'action', 'get', actionName]
+        const ibmcloud = spawn('ibmcloud', args);
+        const stdout = []
+        const stderr = []
+        let hasBinding = false
+
+        ibmcloud.stdout.on('data', (data) => {
+            if (('' + data).indexOf(binding.type) > -1) {
+                hasBinding = true;
+            }
+        });
+
+        ibmcloud.stderr.on('data', (data) => {
+            stderr.push(data.toString())
+        });
+
+        ibmcloud.on('error', (err) => {
+            if (err.name === 'ENOENT') {
+                const err = new this.serverless.classes.Error(
+                    'Unable to execute `ibmcloud wsk action get` command. Is IBM Cloud CLI installed?'
+                )
+                return reject(err)
+            }
+            reject(err.message)
+        });
+
+        ibmcloud.on('close', (code) => {
+            if (code === 2) {
+                const err = new this.serverless.classes.Error(
+                    'Unable to execute `ibmcloud wsk service unbind` command. Is IBM Cloud Functions CLI plugin installed?'
+                )
+                return reject(err)
+            }
+            if (code > 0) {
+                const errmsg = (stderr[0] || '').split('\n')[0]
+                const err = new this.serverless.classes.Error(`Failed to unbind service binding (${JSON.stringify(binding)})\n  ${errmsg}`);
+                return reject(err)
+            }
+            if (this.options.verbose) {
+                this.serverless.cli.log(`Service unbound from action ${actionName}`);
+            }
+            if (hasBinding) {
+                args = ['wsk', 'service', 'unbind', binding.type, actionName]
+                const ibmcloud2 = spawn('ibmcloud', args);
+
+                ibmcloud2.stdout.on('data', (data) => {
+                    stdout.push(data.toString())
+                })
+                ibmcloud2.stderr.on('data', (data) => {
+                    stderr.push(data.toString())
+                })
+                ibmcloud2.on('error', (err) => {
+                    if (err.name === 'ENOENT') {
+                        const err = new this.serverless.classes.Error(
+                            'Unable to execute `ibmcloud wsk service unbind` command. Is IBM Cloud CLI installed?'
+                        )
+                        return reject(err)
+                    }
+                    reject(err.message)
+                });
+                ibmcloud2.on('close', (code) => {
+                    if (code === 2) {
+                        const err = new this.serverless.classes.Error(
+                            'Unable to execute `ibmcloud wsk service unbind` command. Is IBM Cloud Functions CLI plugin installed?'
+                        )
+                        return reject(err)
+                    }
+                    if (code > 0) {
+                        const errmsg = (stderr[0] || '').split('\n')[0]
+                        const err = new this.serverless.classes.Error(`Failed to configure service binding (${JSON.stringify(binding)})\n  ${errmsg}`);
+                        return reject(err)
+                    }
+                    if (this.options.verbose) {
+                        this.serverless.cli.log(`Unbound Service Binding: ${JSON.stringify(binding)}`);
+                    }
+                    console.log(`Service ${c.reset.bold.blue(binding.type)} unbound from ${c.reset.bold.blue(actionName)}`)
+                    resolve()
+                })
+            } else {
+                console.log(`Service ${c.reset.bold.blue(binding.type)} not bound to ${c.reset.bold.blue(actionName)}`)
+                resolve()
+            }
+        });
+    });
 }
 
 function getServiceBindings() {
-    this.serverless.service.bindings = { fns: [], packages: []};
     Object.keys(this.serverless.service.functions).map((fnName)=> {
-        const bindings = this.serverless.service.functions[fnName].bind;
+        const fnConfig = this.serverless.service.functions[fnName];
+        const bindings = fnConfig.bind;
 
-        if (!this.serverless.service.functions[fnName].enabled) {
-            return this.logger.message('SERVICE_BINDINGS', 'Bindings for function ' + c.reset.bold(fnName) + c.red(' are excluded from deployment'));
+        if (!fnConfig.enabled) {
+            if (this.options.verbose) {
+                this.logger.message('SERVICE_BINDINGS', 'Bindings for function ' + c.reset.bold(fnName) + c.red(' are excluded from deployment'));
+            }
+            return;
         }
 
         if (bindings && bindings.length) {
             bindings.reduce((val, el)=> {
-                    val.fns.push(Object.assign(el.service, { action: this.serverless.service.functions[fnName].name }));
+                    if (fnConfig.package && fnConfig.package.name) {
+                        val.fns.push(Object.assign(el.service, { action: fnConfig.package.name + '/' + fnConfig.name, tmpAction: fnConfig.name }))
+                    } else {
+                        val.fns.push(Object.assign(el.service, { action: fnConfig.name, tmpAction: fnConfig.name }));
+                    }
                 },
                 this.serverless.service.bindings
             );
         }
-        // TODO implement package bindings deployment
     });
 
     return this.serverless.service.bindings;

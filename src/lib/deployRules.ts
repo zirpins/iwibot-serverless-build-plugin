@@ -26,7 +26,13 @@ function enableRule(rule) {
 }
 
 function deployRule(rule) {
-    if (!rule.enabled) { return this.logger.message('RULE', c.reset.bold(rule.name) + c.red(' is excluded from deployment'));}
+    if (!rule.enabled) {
+        if (this.options.verbose) {
+            this.logger.message('RULE', c.reset.bold(rule.name) + c.red(' is excluded from deployment'))
+        }
+        return
+    }
+
     return this.provider.client().then(ow => {
         if (this.options.verbose) {
             this.serverless.cli.log(`Deploying Rule: ${rule.ruleName}`);
