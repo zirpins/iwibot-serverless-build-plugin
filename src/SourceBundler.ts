@@ -48,7 +48,6 @@ export class SourceBundler {
        *  A relative path to the servicePath
        *  @example ./functions/test/handler.js
        */
-      debugger
       const relPath = join(
         filePath.split(this.servicePath)[1],
       ).replace(/^\/|\/$/g, '');
@@ -81,7 +80,6 @@ export class SourceBundler {
     };
 
     function filter(dirPath, stats) {
-      debugger
       if (dirPath.endsWith('node_modules') || dirPath.endsWith(sep + 'test') || dirPath.endsWith('.serverless')) {
         return false;
       }

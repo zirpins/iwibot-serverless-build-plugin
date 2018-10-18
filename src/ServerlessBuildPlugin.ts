@@ -1,27 +1,27 @@
 import * as Archiver from 'archiver';
 import * as Bluebird from 'bluebird';
 import * as path from 'path';
-import {join, resolve} from 'path';
-import {spawn} from 'child_process';
+import { join } from 'path';
+import { spawn } from 'child_process';
 import * as c from 'chalk';
-import {copySync, createWriteStream, emptyDir, ensureDir, readFile, rename, writeFile} from 'fs-extra';
-import {clone, isArray, merge} from 'lutils';
+import { copySync, copy, createWriteStream, emptyDir, ensureDir, readFile, rename, writeFile } from 'fs-extra';
+import { clone, isArray, merge } from 'lutils';
 import * as semver from 'semver';
-import {defaultConfig, IPluginConfig} from './config';
-import {FileBuild} from './FileBuild';
-import {Logger} from './lib/Logger';
+import { defaultConfig, IPluginConfig } from './config';
+import { FileBuild } from './FileBuild';
+import { Logger } from './lib/Logger';
 
-import {NodeJsModuleBundler} from './NodeJsModuleBundler';
-import {SourceBundler} from './SourceBundler';
+import { NodeJsModuleBundler } from './NodeJsModuleBundler';
+import { SourceBundler } from './SourceBundler';
 
+import { bindServices, bindTestServices, unbindServices, unbindTestServices } from "./lib/deployServiceBindings";
+import { bindRoutes, bindTestRoutes, unbindRoutes, unbindTestRoutes} from "./lib/deployApiGw";
+import { deployFunctions, deploySequences } from "./lib/deployFunctions";
 import deployPackages from './lib/deployPackages';
-import configureServiceBindings from './lib/deployServiceBindings';
 import deployRules from './lib/deployRules'
 import deployTriggers from './lib/deployTriggers'
 import deployFeeds from './lib/deployFeeds'
-import deployRoutes from './lib/deployApiGw'
-import {deployFunctions, deploySequences} from "./lib/deployFunctions";
-import {readFileSync, writeFileSync} from "fs";
+import { readFileSync, writeFileSync } from "fs";
 
 const OpenwhiskProvider = require('./OpenwhiskProvider');
 const { initializeResources } = require('./lib/initializeResources');
@@ -78,30 +78,14 @@ export class ServerlessBuildPlugin {
         this.buildTmpDir = join(this.tmpDir, 'build');
         this.artifactTmpDir = join(this.tmpDir, 'artifacts');
 
-        //
-        // COMPATIBILITY
-        //
-        // Put the package plugin into 'individual' mode
-        this.serverless.service.package.individually = true;
-        this.serverless.service.package.exclude = ['**/*'];
-        this.serverless.service.package.name = 'IWIBot';
-
-        if (semver.lt(version, '1.12.0')) {
-
-            // In sls 1.11 and lower this will skip 'archiving'
-            this.serverless.service.package.artifact = true;
-
-            this.logger.message(
-                c.red('DEPRECATION'),
-                'Upgrade to >= serverless@1.12. Build plugin is dropping support in the next major version',
-            );
-        }
-
+        const doc = yaml.safeLoad(readFileSync(join(this.servicePath, 'serverless.yml'), 'utf8'));
+        Object.assign(this.serverless.service, { package: doc.package})
 
         this.serverless.service.triggers = [];
         this.serverless.service.rules = [];
-        this.serverless.service.bindings = [[{ packages:  [], fns: [] }]]; // array o
+        this.serverless.service.bindings = { fns: [], packages: [] };
         this.serverless.service.packages = [];
+        this.serverless.service.apis = [];
 
         //
         // PLUGIN CONFIG GENERATION
@@ -182,17 +166,25 @@ export class ServerlessBuildPlugin {
             return obj;
         }, {});
 
-        this.overridePackagePlugin();
-
         this.hooks = {
             'before:iwibot:deployAll': initializeResources.bind(this),
             'iwibot:deployAll': this.deployAll.bind(this),
-            'iwibot:package:iwibot-package': this.build.bind(this),
+            'after:iwibot:deployAll:iwibot-deploy': bindRoutes.bind(this),
+            'iwibot:package:iwibot-package': this.buildFunctions.bind(this),
             'before:iwibot:deploy:iwibot-deploy': initializeResources.bind(this),
-            'iwibot:deploy:iwibot-deploy': this.deploy.bind(this),
-            'iwibot:service:bind:service-bind': configureServiceBindings.bind(this),
+            'iwibot:deploy:iwibot-deploy': this.deployFunctions.bind(this),
+            'iwibot:deploy:test:iwibot-deploy-test': this.deployTestFunctions.bind(this),
+            'iwibot:api:bind:api-bind': bindRoutes.bind(this),
+            'iwibot:api:unbind:api-unbind': unbindRoutes.bind(this),
+            'iwibot:service:bind:service-bind': bindServices.bind(this),
+            'iwibot:service:unbind:service-unbind': unbindServices.bind(this),
+            'iwibot:bind:fin': this.afterDeploy.bind(this),
+            'iwibot:bind:test:fin-test': this.afterTestDeploy.bind(this),
+            'iwibot:unbind:unfin': this.unbindResources.bind(this),
+            'iwibot:unbind:test:unfin-test': this.unbindTestResources.bind(this),
             'iwibot:template:create:create-from-template': this.createFromTemplate.bind(this),
             'iwibot:remove:iwibot-remove': this.removeFunctions.bind(this),
+            'iwibot:remove:test:iwibot-remove-test': this.removeTestFunctions.bind(this),
             'iwibot:enable:iwibot-enable': this.enableFunctions.bind(this),
             'iwibot:disable:iwibot-disable': this.disableFunctions.bind(this)
         };
@@ -207,16 +199,54 @@ export class ServerlessBuildPlugin {
 
                 },
                 commands: {
+                    bind: {
+                        usage: 'Configure service bindings and api gateway definitions (shorthand for `sls iwibot service bind` and `sls iwibot api bind`)',
+                        commands: {
+                            test: {
+                                usage: 'Configure service bindings and api gateway definitions for testing',
+                                lifecycleEvents: ['fin-test']
+                            }
+                        },
+                        lifecycleEvents: ['fin']
+                    },
+                    unbind: {
+                        usage: 'remove the api gateway definitions and service bindings (shorthand for `sls iwibot service unbind` and `sls iwibot api unbind`)',
+                        commands: {
+                            test: {
+                                usage: '',
+                                lifecycleEvents: ['unfin-test']
+                            }
+                        },
+                        lifecycleEvents: ['unfin']
+                    },
                     package: {
                         usage: 'Package all iwibot functions',
                         lifecycleEvents: ['iwibot-package']
                     },
                     deploy: {
                         usage: 'Deploy all enabled iwibot functions',
+                        commands: {
+                            test: {
+                                usage: 'Deploy all enabled functions to the /iwibotTest api',
+                                lifecycleEvents: ['iwibot-deploy-test']
+                            }
+                        },
                         lifecycleEvents: ['iwibot-deploy']
                     },
                     remove: {
                         usage: 'Undeploy all enabled iwibot functions',
+                        commands: {
+                            test: {
+                                usage: 'Remove all enabled functions from the test api',
+                                lifecycleEvents: ['iwibot-remove-test'],
+                                options: {
+                                    force: {
+                                        usage: 'force undeployment of all functions',
+                                        shortcut: 'f'
+                                    }
+                                }
+                            }
+                        },
                         options: {
                             force: {
                                 usage: 'force undeployment of all functions',
@@ -241,6 +271,25 @@ export class ServerlessBuildPlugin {
                                 lifecycleEvents: [
                                     'service-bind'
                                 ]
+                            },
+                            unbind: {
+                                usage: 'Unbind services',
+                                lifecycleEvents: [
+                                    'service-unbind'
+                                ]
+                            }
+                        }
+                    },
+                    api: {
+                        usage: 'Use the bind command to configure the api gateway defenitions',
+                        commands: {
+                            bind: {
+                                usage: 'Bind api gateway definitions',
+                                lifecycleEvents: ['api-bind']
+                            },
+                            unbind: {
+                                usage: 'Unbind api gateway definitions',
+                                lifecycleEvents: ['api-unbind']
                             }
                         }
                     },
@@ -280,35 +329,35 @@ export class ServerlessBuildPlugin {
         });
     }
 
+    private afterDeploy = async () => {
+        bindServices.call(this);
+        await bindRoutes.call(this);
+    };
+
+    private unbindResources = async () => {
+        unbindServices.call(this);
+        await unbindRoutes.call(this);
+    };
+
+    private afterTestDeploy = async () => {
+        this.serverless.service.deployTest = true;
+        bindTestServices.call(this);
+        await bindTestRoutes.call(this);
+    };
+
+    private unbindTestResources = async () => {
+        this.serverless.service.deployTest = true;
+        unbindTestServices.call(this);
+        await unbindTestRoutes.call(this);
+    };
+
+
     /**
      *  Builds either from file or through babel
      */
-    private build = async () => {
+    private buildFunctions = async () => {
         this.logger.message('BUILDS', 'Initializing');
         this.logger.log('');
-
-        const reduceConfig = (keys) =>
-            keys.reduce((obj, key) => {
-                obj[key] = this.config[key];
-                return obj;
-            }, {});
-
-        if (this.config.nodejsMethod === 'file') {
-            this.logger.config(reduceConfig([
-                'method', 'tryFiles', 'handlerEntryExt',
-                'synchronous', 'deploy', 'useServerlessOffline',
-                'modules', 'zip',
-            ]));
-        } else {
-            this.logger.config(reduceConfig([
-                'method',
-                'synchronous', 'deploy', 'useServerlessOffline',
-                'babel', 'uglify', 'uglifySource', 'uglifyModules',
-                'normalizeBabelExt', 'sourceMaps', 'transformExtensions',
-                'baseExclude',
-                'modules', 'include', 'exclude', 'zip',
-            ]));
-        }
 
         // Ensure directories
 
@@ -349,7 +398,7 @@ export class ServerlessBuildPlugin {
         const types = ['nodejs', 'go', 'java', 'php', 'python'];
 
         if (!types.includes(kind)) {
-            return this.logger.message('Template', `The type ${kind} is unsupported!`);
+            return this.logger.message('Template', `The type ${kind} is unsupported! Supported types are ${types}`);
         }
 
         ncp(join(this.servicePath, 'template-' + kind), join(this.servicePath, fnPathName), async (err) => {
@@ -464,11 +513,12 @@ export class ServerlessBuildPlugin {
         const writePart = () => {
             doc.functions[name] = {
                 enabled: true,
+                relpath: fnPathName,
                 name: name,
                 runtime: kind === 'go' ? 'blackbox' : kind,
                 handler: handler,
                 package: {
-                    name: fnPathName,
+                    name: this.serverless.service.package.name,
                     include: includes
                 }
             };
@@ -498,6 +548,27 @@ export class ServerlessBuildPlugin {
         }
     }
 
+    private removeTestFunctions = async () => {
+        this.provider.client().then(async (ow) => {
+            let result = null;
+            try {
+                result = await ow.packages.get({ name: this.serverless.service.package.testname });
+            } catch (e) {
+                console.log(`Package ${this.serverless.service.package.testname} does not exist`)
+                return;
+            }
+            await Bluebird.all(
+                Bluebird.map(result.actions, (fnConfig) => {
+                    if (this.serverless.service.functions[fnConfig['name']].enabled || this.options['force']) {
+                        ow.actions.delete({ name: `${result.name}/${fnConfig['name']}` }).then(() => {
+                            console.log(`${c.green('successfully') + ' deleted ' + c.reset.bold(result.name + '/' + fnConfig['name'])}`)
+                        })
+                    }
+                })
+            )
+        })
+    };
+
     private removeFunctions = async () => {
         this.provider.client().then(async (ow) => {
             if (this.options['force']) {
@@ -511,9 +582,14 @@ export class ServerlessBuildPlugin {
                 });
             } else {
                 Bluebird.map(Object.keys(this.serverless.service.functions), async (fnName) => {
-                    if (this.serverless.service.functions[fnName].enabled) {
+                    const fnConfig = this.serverless.service.functions[fnName];
+                    if (fnConfig.enabled) {
                         try {
-                            await ow.actions.delete(fnName);
+                            if (fnConfig.package && fnConfig.package.name) {
+                                await ow.actions.delete(`${fnConfig.package.name}/${fnName}`)
+                            } else {
+                                await ow.actions.delete(fnName);
+                            }
                             this.logger.message('Function', c.reset.bold(fnName) + ' ' + c.green('successfully deleted!'));
                         } catch (e) {
                             this.logger.message('Function', c.reset.bold(fnName) + ' ' + c.green('do not exist!'));
@@ -527,50 +603,81 @@ export class ServerlessBuildPlugin {
     private enableFunctions = async () => {
         const doc = yaml.safeLoad(readFileSync(join(this.servicePath, 'serverless.yml'), 'utf8'));
 
-        await Bluebird.all(Object.keys(doc.functions).map((fnName) => {
-            doc.functions[fnName].enabled = true;
-        }));
+        if (this.options['fn']) {
+            if (doc.functions[this.options['fn']]) {
+                doc.functions[this.options['fn']].enabled = true;
+            }
+        } else {
+            await Bluebird.all(Object.keys(doc.functions).map((fnName) => {
+                doc.functions[fnName].enabled = true;
+            }));
+        }
 
         writeFileSync(join(this.servicePath, 'serverless.yml'), yaml.safeDump(doc));
-        this.logger.message('Functions', c.reset.bold('enabled') + ' all functions in serverless.yml');
+        if (this.options['fn']) {
+            if (doc.functions[this.options['fn']]) {
+                this.logger.message('Functions', c.reset.bold('enabled') + ` ${ c.reset.bold(this.options['fn']) } function in serverless.yml`);
+            }
+        } else {
+            this.logger.message('Functions', c.reset.bold('enabled') + ' all functions in serverless.yml');
+        }
     };
 
     private disableFunctions = async () => {
         const doc = yaml.safeLoad(readFileSync(join(this.servicePath, 'serverless.yml'), 'utf8'));
 
-        await Bluebird.all(Object.keys(doc.functions).map((fnName) => {
-            doc.functions[fnName].enabled = false;
-        }));
+        if (this.options['fn']) {
+            if (doc.functions[this.options['fn']]) {
+                doc.functions[this.options['fn']].enabled = false;
+            }
+        } else {
+            await Bluebird.all(Object.keys(doc.functions).map((fnName) => {
+                doc.functions[fnName].enabled = false;
+            }));
+        }
 
         writeFileSync(join(this.servicePath, 'serverless.yml'), yaml.safeDump(doc));
-        this.logger.message('Functions', c.reset.bold('disabled') + ' all functions in serverless.yml');
+        if (this.options['fn']) {
+            if (doc.functions[this.options['fn']]) {
+                this.logger.message('Functions', c.reset.bold('disabled') + ` ${this.options['fn']} function in serverless.yml`);
+            }
+        } else {
+            this.logger.message('Functions', c.reset.bold('disabled') + ' all functions in serverless.yml');
+        }
     };
 
     private deployAll = async () => {
-        await this.build();
-        await this.deploy();
+        await this.buildFunctions();
+        await this.deployFunctions();
     };
 
-    private deploy = async () => {
+    private deployFunctions = async () => {
         await Bluebird.bind(this)
-            //.then(deployPackages.bind(this))
+            .then(deployPackages.bind(this))
             .then(deployFunctions.bind(this))
             .then(deploySequences.bind(this))
-            .then(deployRoutes.bind(this))
             .then(deployTriggers.bind(this))
             .then(deployFeeds.bind(this))
             .then(deployRules.bind(this))
-            .then(() => this.serverless.cli.log('Deployment successful!'));
+            .then(() => this.serverless.cli.log('Uploading the archives..'));
+    };
+
+    private deployTestFunctions = async () => {
+        this.serverless.service.deployTest = true;
+        await deployPackages.bind(this)();
+        await deployFunctions.bind(this)();
     };
 
     private async buildFunction (fnName, fnConfig) {
         const runtime = fnConfig.runtime || this.serverless.service.provider.runtime;
 
-        this.logger.message('FUNCTION', c.reset.bold(fnName) + ' with runtime ' + c.reset.blue(runtime));
-
         if (!fnConfig.enabled) {
-            this.logger.message('FUNCTION', c.reset.bold(fnName) + c.red(' is excluded from packaging'));
+            if (this.options['verbose']) {
+                this.logger.message('FUNCTION', c.reset.bold(fnName) + c.red(' is excluded from packaging'));
+            }
             return fnConfig;
+        } else {
+            this.logger.message('FUNCTION', c.reset.bold(fnName) + ' with runtime ' + c.reset.blue(runtime));
         }
 
         if (runtime.indexOf('nodejs') > -1) {
@@ -600,9 +707,9 @@ export class ServerlessBuildPlugin {
         this.setConfig(false, false, false, false);
 
         return new Promise((resolve, reject) => {
-            process.chdir(join(this.servicePath, fnConfig.package.name, 'src', 'de.hska.iwibot.actions.go'));
+            process.chdir(join(this.servicePath, fnConfig.relpath, 'src', 'de.hska.iwibot.actions.go'));
             // prepare go env for cross compilation
-            process.env.GOPATH = join(this.servicePath, fnConfig.package.name);
+            process.env.GOPATH = join(this.servicePath, fnConfig.relpath);
             process.env.GOOS='linux';
             process.env.GOARCH='amd64';
 
@@ -626,7 +733,7 @@ export class ServerlessBuildPlugin {
                           const sourceBundler = new SourceBundler({
                               logger: this.logger,
                               archive: artifact,
-                              servicePath: join(this.servicePath, fnConfig.package.name, 'bin'),
+                              servicePath: join(this.servicePath, fnConfig.relpath, 'bin'),
                           });
 
                           this.logger.log('');
@@ -640,7 +747,7 @@ export class ServerlessBuildPlugin {
                           delete process.env.GOOS;
                           delete process.env.GOARCH;
 
-                          fnConfig = await this.completeFunctionArtifact(fnName, artifact);
+                          fnConfig = await this.completeFunctionArtifact(fnConfig, artifact);
 
                           process.chdir(this.servicePath);
                           resolve(fnConfig);
@@ -672,7 +779,9 @@ export class ServerlessBuildPlugin {
         const artifact = Archiver('zip', this.config.zip);
         this.setConfig(false, false, false, false);
 
-        this.serverless.pluginManager.addPlugin(require('serverless-python-requirements'))
+        await copy(join(this.servicePath, fnConfig.relpath, 'requirements.txt'), join(this.servicePath, '.serverless', 'requirements', 'reqirements.txt'))
+
+        this.serverless.pluginManager.addPlugin(require('serverless-python-requirements'));
         await this.serverless.pluginManager.invoke(['requirements', 'install']);
 
         const sourceBundler = new SourceBundler({
@@ -680,13 +789,13 @@ export class ServerlessBuildPlugin {
             archive: artifact,
             // requirements are packages with another plugin and the __main__.py
             // need to be at the root of the zip, so the relative path here is lib. Not the action root dir!
-            servicePath: join(this.servicePath, fnConfig.package.name, 'lib')
+            servicePath: join(this.servicePath, fnConfig.relpath, 'lib')
         });
 
         const sourceBundlerPythonRequirements = new SourceBundler({
             logger: this.logger,
             archive: artifact,
-            servicePath: join('.serverless', 'requirements')
+            servicePath: join('.serverless', fnConfig.relpath)
         });
 
         this.logger.log('');
@@ -703,7 +812,7 @@ export class ServerlessBuildPlugin {
             include: ['**/*']
         });
 
-        const result = await this.completeFunctionArtifact(fnName, artifact);
+        const result = await this.completeFunctionArtifact(fnConfig, artifact);
 
         this.logger.log('');
 
@@ -717,7 +826,7 @@ export class ServerlessBuildPlugin {
         return new Promise(async (resolve, reject) => {
             let moduleIncludes: Set<string>;
             const artifact = Archiver('zip', this.config.zip);
-            process.chdir(fnConfig.package.name);
+            process.chdir(fnConfig.relpath);
             const res = spawn('composer', ['install']);
 
             res.stdout.on('data', (data) => {
@@ -729,7 +838,7 @@ export class ServerlessBuildPlugin {
                    let sourceBundler = new SourceBundler({
                        logger: this.logger,
                        archive: artifact,
-                       servicePath: join(this.servicePath, fnConfig.package.name, 'lib'),
+                       servicePath: join(this.servicePath, fnConfig.relpath, 'lib'),
                    });
 
                    await sourceBundler.bundle({
@@ -741,7 +850,7 @@ export class ServerlessBuildPlugin {
                    sourceBundler = new SourceBundler({
                        logger: this.logger,
                        archive: artifact,
-                       servicePath: join(this.servicePath, fnConfig.package.name),
+                       servicePath: join(this.servicePath, fnConfig.relpath),
                    });
 
                    await sourceBundler.bundle({
@@ -749,7 +858,7 @@ export class ServerlessBuildPlugin {
                        include: fnConfig.package.include.filter((el) => { return el.indexOf('lib') === -1 })
                    });
 
-                   const result = await this.completeFunctionArtifact(fnName, artifact);
+                   const result = await this.completeFunctionArtifact(fnConfig, artifact);
                    process.chdir('..');
                    resolve(result);
                } else {
@@ -762,17 +871,19 @@ export class ServerlessBuildPlugin {
     private async buildJavaFunction (fnName, fnConfig) {
         this.setConfig(false, false, false, false);
         return new Promise((resolve, reject) => {
-            const res = spawn('mvn', ['package', '-f' + fnConfig.package.name]);
+            const res = spawn('mvn', ['package', '-f' + fnConfig.relpath]);
 
             res.stdout.on('data', (data) => console.log('' + data));
             res.on('close',  (code)=>{
                 if (code === 0) {
                     // copy jar to artifacts dir (.serverless)
-                    copySync(join(path.resolve(fnConfig.package.name), 'target', fnName + '.jar'), join(path.resolve('.serverless'), fnName + '.jar'));
-
-                    const artifactPath = join(path.resolve('.serverless'), fnName + '.jar');
-                    fnConfig.artifact = artifactPath;
-                    fnConfig.package.artifact = artifactPath;
+                    let targetPath = '';
+                    if (fnConfig.package && fnConfig.package.name) {
+                        targetPath = join(path.resolve('.serverless'), fnConfig.package.name, fnName + '.jar')
+                    } else {
+                        targetPath = join(path.resolve('.serverless'), fnName + '.jar')
+                    }
+                    copySync(join(path.resolve(fnConfig.relpath), 'target', fnName + '.jar'), targetPath);
                     resolve(fnConfig);
                 } else {
                     reject();
@@ -790,10 +901,10 @@ export class ServerlessBuildPlugin {
         let moduleIncludes: Set<string>;
         const { nodejsMethod } = this.config;
         const artifact = Archiver('zip', this.config.zip);
-        this.setConfig(false, false, false, false);
+        this.setConfig(true, false, false, false);
 
         return new Promise(async (resolve, reject) => {
-            process.chdir(fnConfig.package.name);
+            process.chdir(fnConfig.relpath);
             const res = spawn('npm', ['install']);
 
             res.stdout.on('data', (data) => {
@@ -811,10 +922,8 @@ export class ServerlessBuildPlugin {
                     transformExtensions: this.config.transformExtensions,
                     logger: this.logger,
                     archive: artifact,
-                    servicePath: join(this.servicePath, fnConfig.package.name),
+                    servicePath: join(this.servicePath, fnConfig.relpath),
                 });
-
-                this.logger.log('servicePath: ' + this.servicePath);
 
                 this.logger.log('');
 
@@ -846,7 +955,7 @@ export class ServerlessBuildPlugin {
                                ? this.config.uglify
                                : undefined,
 
-                           servicePath: join(this.servicePath, fnConfig.package.name),
+                           servicePath: join(this.servicePath, fnConfig.relpath),
                            archive: artifact,
                        },
                    ).bundle({
@@ -856,7 +965,7 @@ export class ServerlessBuildPlugin {
 
                    this.logger.log('');
 
-                   const result = await this.completeFunctionArtifact(fnName, artifact);
+                   const result = await this.completeFunctionArtifact(fnConfig, artifact);
 
                    this.logger.log('');
                    process.chdir(this.servicePath);
@@ -872,12 +981,17 @@ export class ServerlessBuildPlugin {
     /**
      *  Writes the `artifact` and attaches it to serverless
      */
-    private async completeFunctionArtifact (fnName: string, artifact: Archiver.Archiver) {
-        const artifactPath = join(
+    private async completeFunctionArtifact (fnConfig: Object, artifact: Archiver.Archiver) {
+        let artifactPath = join(
             this.servicePath,
             '.serverless',
-            `${fnName}.zip`
+            `${fnConfig['name']}.zip`
         );
+
+        if (fnConfig['package'] && fnConfig['package']['name']) {
+            await ensureDir(join(this.servicePath, '.serverless', fnConfig['package']['name']))
+            artifactPath = join(this.servicePath, '.serverless', fnConfig['package']['name'], `${fnConfig['name']}.zip`)
+        }
 
         // create zip file from buffered zip archive
         await new Promise((resolve, reject) => {
@@ -894,39 +1008,9 @@ export class ServerlessBuildPlugin {
 
         this.logger.message(
             'ARTIFACT',
-            `${c.bold(fnName)} ${c.blue(size)}`,
+            `${c.bold.blue(artifactPath)} ${c.blue(size)}`,
         );
 
-        this.serverless.service.functions[fnName].artifact = artifactPath;
-        this.serverless.service.functions[fnName].package.artifact = artifactPath;
-
-        return this.serverless.service.functions[fnName];
+        return fnConfig;
     }
-
-  /**
-   * Mutates `packageFunction` on the `Package` serverless built-in plugin
-   * in order to intercept
-   */
-  private overridePackagePlugin = () => {
-    const packagePlugin = this.serverless.pluginManager.plugins.find((item) =>
-      item.constructor.name === 'Package',
-    );
-
-    const oldPluginFn = packagePlugin.packageFunction;
-    packagePlugin.packageFunction = async (fnName) => {
-      const fnConfig = this.serverless.service.functions[fnName];
-      const artifactPath = fnConfig.artifact || (fnConfig.package && fnConfig.package.artifact);
-
-      // If we haven't built the artifact ourself, delegate back to the vanilla packagePlugin implementation
-      if (!artifactPath ||
-          (fnConfig.runtime.indexOf('nodejs') > -1
-          || fnConfig.runtime.indexOf('java') > -1
-          || fnConfig.runtime.indexOf('php') > -1
-      )) {
-        return oldPluginFn.call(packagePlugin, fnName);
-      }
-
-      return fnConfig.artifact;
-    };
-  }
 }
