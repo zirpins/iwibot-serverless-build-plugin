@@ -905,7 +905,11 @@ export class ServerlessBuildPlugin {
 
         return new Promise(async (resolve, reject) => {
             process.chdir(fnConfig.relpath);
-            const res = spawn('npm', ['install']);
+            let cmd = 'npm';
+            if (process.platform.indexOf('win') > -1) {
+                cmd = 'npm.cmd'
+            }
+            const res = spawn(cmd, ['install']);
 
             res.stdout.on('data', (data) => {
                console.log('' + data);
