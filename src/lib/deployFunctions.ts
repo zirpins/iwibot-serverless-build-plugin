@@ -40,7 +40,7 @@ async function filterActions(sequence) {
     return Object.keys(functionsObj).filter(a => match(functionsObj[a]));
 }
 
-function convertAnnotations(annotations) {
+function convertToKeyValue(annotations) {
     if (!annotations) {
         return {};
     }
@@ -143,15 +143,19 @@ async function deployFunctionHandler(functionHandler) {
         throw new Error(e);
     }
 
+    if (functionHandler.parameters) {
+        Object.assign(functionHandler.action, { parameters: convertToKeyValue(functionHandler.parameters)})
+    }
+
     if (this.serverless.service.deployTest) {
         functionHandler.name = this.serverless.service.package.testname.concat('/').concat(functionHandler.name)
-        Object.assign(functionHandler.action, { annotations: convertAnnotations( { 'web-export': true })})
+        Object.assign(functionHandler.action, { annotations: convertToKeyValue( { 'web-export': true })})
     } else if (functionHandler.package && functionHandler.package.name) {
         functionHandler.name = functionHandler.package.name + '/' + functionHandler.name
     }
 
     if (!this.serverless.service.deployTest && functionHandler.annotations) {
-        Object.assign(functionHandler.action, { annotations: convertAnnotations(functionHandler.annotations)});
+        Object.assign(functionHandler.action, { annotations: convertToKeyValue(functionHandler.annotations)});
     }
 
     return this.provider.client().then(ow => {
