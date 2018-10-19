@@ -411,7 +411,7 @@ export class ServerlessBuildPlugin {
                     // modify package.json values
                     const packageJson = require(join(this.servicePath, fnPathName, 'package.json'));
                     packageJson.name = name;
-                    packageJson.main = join('lib', name + '.js');
+                    packageJson.main = 'lib/' + name + '.js';
                     await writeFile(join(this.servicePath, fnPathName, 'package.json'), JSON.stringify(packageJson, null, 2));
 
                     // rename files
