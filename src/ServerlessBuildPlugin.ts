@@ -420,7 +420,7 @@ export class ServerlessBuildPlugin {
 
                     this.logger.message('Template', `nodejs template written to directory ${fnPathName}`);
 
-                    this.addYamlPartToFile(name, kind + ':8', fnPathName, join('lib', name + '.main'), [
+                    this.addYamlPartToFile(name, kind + ':8', fnPathName, 'lib/' + name + '.main', [
                         'lib/**/*',
                         'package.json',
                         'README.md'
