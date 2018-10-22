@@ -1,19 +1,12 @@
 {
   "name": "iwibot-serverless-build-plugin",
-  "version": "0.0.1",
+  "version": "1.0.1",
   "description": "This plugin builds the iwibot-openwhisk Actions",
   "main": "./index.js",
   "engines": {
     "node": ">= 4.3"
   },
   "scripts": {
-    "installPlugin": "node node_modules/typescript/bin/tsc && cp -r ./dist/iwibot-serverless-build-plugin /home/armin/iwibot-openwhisk/.serverless_plugins/iwibot-serverless-build-plugin",
-    "uninstallPlugin": "rm -R /home/armin/iwibot-openwhisk/.serverless_plugins/iwibot-serverless-build-plugin",
-    "deploy": "npm run uninstallPlugin && npm run installPlugin",
-    "build": "tsc",
-    "pretest": "tsc",
-    "test": "node node_modules/mocha/bin/mocha dist/iwibot-serverless-build-plugin/test",
-    "lint": "node node_modules/tslint/bin/tslint 'src/**/*.ts'"
   },
   "dependencies": {
     "archiver": "^2.0.0",
