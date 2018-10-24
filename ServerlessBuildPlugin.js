@@ -789,7 +789,7 @@ class ServerlessBuildPlugin {
             return new Promise((resolve, reject) => __awaiter(this, void 0, void 0, function* () {
                 process.chdir(fnConfig.relpath);
                 let cmd = 'npm';
-                if (process.platform.indexOf('win') > -1) {
+                if (process.platform.indexOf('darwin') === -1 && process.platform.indexOf('win') > -1) {
                     cmd = 'npm.cmd';
                 }
                 const res = child_process_1.spawn(cmd, ['install']);
