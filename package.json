@@ -10,15 +10,12 @@
     "release_dir": "../iwibot-serverless-build-plugin-release/"
   },
   "scripts": {
-    "prinstallPlugin": "git worktree add $npm_package_config_release_dir release && cd $npm_package_config_release_dir && git checkout release",
+    "preinstallPlugin": "npm run uninstallPlugin",
     "installPlugin": "tsc && cp package.json package-lock.json $npm_package_config_release_dir && cp -R ./dist/iwibot-serverless-build-plugin/* $npm_package_config_release_dir",
-    "posinstallPlugin": "git commit -m $npm_package_version && git push origin && git tag v$npm_package_version && git push --tags origin cd ../iwibot-serverless-build-plugin/ && rm -R $npm_package_config_release_dir && git worktree prune",
     "uninstallPlugin": "rm -R $npm_package_config_release_dir",
-    "deploy": "npm run uninstallPlugin && npm run installPlugin",
     "build": "tsc",
     "pretest": "tsc",
     "test": "mocha /test",
-    "e": "echo $npm_package_version",
     "lint": "tslint 'src/**/*.ts'"
   },
   "dependencies": {
